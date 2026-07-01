@@ -53,6 +53,9 @@ class vec3 {
         return std::sqrt(length_squared());
     }
 
+    // v·v = ‖v‖² (produit scalaire d'un vecteur avec lui-même = sa longueur au carré).
+    // C'est ce qui permet d'écrire l'équation de la sphère (C-P)·(C-P) = r² sans
+    // passer par une racine carrée : "P est sur la sphère" <=> "P est à distance r de C".
     double length_squared() const {
         return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
     }
@@ -123,6 +126,11 @@ inline vec3 cross(const vec3& u, const vec3& v) {
 // Normalise v (même direction, longueur 1). Indispensable dès qu'on ne veut que la
 // direction pure sans que la longueur ne fausse les calculs (directions de rayons,
 // normales de surface avant un dot()).
+//
+// Cas concret : la normale d'une sphère au point d'impact P est (P-C)/r, càd
+// unit_vector(P-C) — le vecteur du centre vers P est déjà perpendiculaire à la
+// surface (tout point de la sphère est à distance r de C), diviser par r/le
+// normaliser donne juste un vecteur unitaire gratuit, sans trigonométrie.
 inline vec3 unit_vector(const vec3& v) {
     return v / v.length();
 }

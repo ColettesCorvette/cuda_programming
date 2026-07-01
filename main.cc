@@ -4,6 +4,17 @@
 #include "ray.h"
 
 
+// Un point P est sur la sphère <=> (C-P)·(C-P) = r² (distance au centre = r,
+// élevée au carré pour éviter une racine). En remplaçant P par P(t) = origine + t*direction
+// (l'équation du rayon), développer ce produit scalaire donne un polynôme du 2nd degré en t :
+// a*t² + b*t + c = 0, avec a = d·d, b = -2*d·(C-Q), c = (C-Q)·(C-Q) - r².
+//
+// Le discriminant compte les intersections réelles :
+//   < 0 : le rayon rate la sphère (aucun t ne met le point pile sur la surface)
+//   = 0 : le rayon est tangent (un seul point de contact)
+//   > 0 : le rayon entre et ressort (deux points, t1 < t2)
+// (on ne garde pour l'instant que l'existence d'une solution, pas la plus petite racine
+// positive qui donnerait le premier impact)
 bool hit_sphere(const point3& center, double radius, const ray& r) {
     vec3 oc = center - r.origin();
     auto a = dot(r.direction(), r.direction());
@@ -27,6 +38,8 @@ int main() {
     
 
     //Image
+    // aspect_ratio = largeur/hauteur, par définition -> hauteur = largeur/aspect_ratio
+    // (pure algèbre, pas de magie : c'est juste l'équation de définition réarrangée).
     auto aspect_ratio = 16.0 / 9.0;
     int image_width = 400;
 
@@ -41,17 +54,29 @@ int main() {
     auto viewport_width = viewport_height * (double(image_width)/image_height);
     auto camera_center = point3(0, 0, 0);
 
-    // Calculate the vectors across the horizontal and down the vertical viewport edges.
+    // Le viewport est un rectangle virtuel DANS LA SCÈNE 3D (pas l'image des pixels) :
+    // c'est la "fenêtre" à travers laquelle on lance les rayons. Vu va du bord gauche
+    // au bord droit ; Vv va du bord HAUT vers le BAS -> le -viewport_height absorbe
+    // l'inversion d'axe entre l'image (j augmente en descendant) et le monde 3D
+    // (y augmente en montant). Grâce à ce signe, i et j croissants avancent naturellement
+    // dans le sens de lecture de l'image, sans plus jamais se soucier de l'inversion.
     auto viewport_u = vec3(viewport_width, 0, 0);
     auto viewport_v = vec3(0, -viewport_height, 0);
 
-    // Calculate the horizontal and vertical delta vectors from pixel to pixel.
+    // Delta = taille d'une cellule de pixel = aussi l'écart entre deux CENTRES voisins
+    // (les demi-cellules de part et d'autre s'annulent quand on va d'un centre au suivant).
     auto pixel_delta_u = viewport_u / image_width;
     auto pixel_delta_v = viewport_v / image_height;
 
-    // Calculate the location of the upper left pixel.
+    // Construction de Q (coin supérieur gauche du viewport), en partant du centre caméra :
+    //  1. -(0,0,focal_length) : avance vers la scène (la caméra regarde vers -z) -> centre du viewport
+    //  2. -viewport_u/2       : recule d'une demi-largeur vers la gauche -> milieu du bord gauche
+    //  3. -viewport_v/2       : Vv pointe vers le bas, donc EN SOUSTRAIRE remonte -> coin haut-gauche
     auto viewport_upper_left = camera_center
                              - vec3(0, 0, focal_length) - viewport_u/2 - viewport_v/2;
+    // P00 = Q + une demi-cellule en largeur ET en hauteur, pour centrer le premier pixel
+    // dans sa cellule plutôt que de le coller au coin du viewport (0.5*(du+dv) = du/2 + dv/2).
+    // Ensuite : position(i,j) = P00 + i*pixel_delta_u + j*pixel_delta_v.
     auto pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v);
 
 
