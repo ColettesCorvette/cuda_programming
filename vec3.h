@@ -13,6 +13,11 @@ class vec3 {
     vec3() : e{0,0,0} {}
     vec3(double e0, double e1, double e2) : e{e0, e1, e2} {}
 
+    // Un 3e constructeur existe mais n'est pas écrit ici : le constructeur de
+    // copie, généré implicitement par le compilateur (copie e[3] élément par
+    // élément). C'est lui qui est appelé dans ray.h par origin_(origin) —
+    // "origin" y est déjà un vec3, pas 3 doubles.
+
     // const : ces méthodes ne modifient pas l'objet, donc utilisables sur un vec3 const
     // (ex: quand le vecteur est reçu en paramètre par const vec3&).
     double x() const { return e[0]; }
