@@ -10,12 +10,17 @@
 // (l'équation du rayon), développer ce produit scalaire donne un polynôme du 2nd degré en t :
 // a*t² + b*t + c = 0, avec a = d·d, b = -2*d·(C-Q), c = (C-Q)·(C-Q) - r².
 //
+// Simplification utilisée ici : b est un multiple de -2, donc on pose h = -b/2 = d·(C-Q).
+// La formule des racines (-b ± √(b²-4ac)) / 2a devient (h ± √(h²-ac)) / a :
+// les facteurs 2 et 4 s'annulent algébriquement — mêmes racines, moins d'opérations.
+// C'est h²-ac qui joue désormais le rôle du discriminant (même signe que b²-4ac).
+//
 // Le discriminant compte les intersections réelles :
 //   < 0 : le rayon rate la sphère (aucun t ne met le point pile sur la surface)
 //   = 0 : le rayon est tangent (un seul point de contact)
 //   > 0 : le rayon entre et ressort (deux points, t1 < t2)
-// (on ne garde pour l'instant que l'existence d'une solution, pas la plus petite racine
-// positive qui donnerait le premier impact)
+// On retourne (h - √disc)/a : la PETITE racine, donc le premier impact le long du
+// rayon (et -1.0, un t impossible, comme code "pas touché").
 double hit_sphere(const point3& center, double radius, const ray& r) {
     vec3 oc = center - r.origin();
     auto a = r.direction().length_squared();
