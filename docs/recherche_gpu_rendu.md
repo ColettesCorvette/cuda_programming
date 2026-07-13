@@ -296,9 +296,151 @@ Dans un pipeline de rendu moderne, les deux collaborent : les RT cores tracent, 
 **débruitent** (le path tracing à faible nombre d'échantillons est bruité ; un réseau de neurones
 nettoie — denoiser OptiX, DLSS Ray Reconstruction).
 
-Point important pour mon parcours : **les RT cores ne sont pas exposés en CUDA pur.** Voies d'accès :
-**OptiX** (API NVIDIA au-dessus de CUDA : shaders ray-gen/closest-hit/miss écrits en CUDA C++,
-traversée BVH orchestrée sur RT cores), ou DXR / Vulkan Ray Tracing via les API graphiques.
+### La BVH et sa traversée, en détail
+
+Le problème : une scène réelle = des millions de triangles (en production tout est maillé en
+triangles — la sphère analytique de `hit_sphere` est un luxe pédagogique). Tester chaque triangle
+pour chaque rayon = O(n), impraticable. La **BVH** (*Bounding Volume Hierarchy*) est un arbre
+binaire de **boîtes englobantes** : la racine englobe toute la scène, chaque nœud englobe ses deux
+enfants, et les feuilles contiennent quelques triangles. Construction (avant le rendu) : englober,
+couper le groupe en deux, récurser.
+
+![Traversée d'une BVH](diagrams/bvh_traversee.svg)
+
+La traversée, pour un rayon donné :
+
+1. tester la boîte racine ; ratée → aucun objet touché, terminé ;
+2. touchée → tester les deux boîtes enfants. **Une boîte ratée élimine tout son sous-arbre d'un
+   coup** — des milliers de triangles écartés par un seul test : c'est l'origine du O(log n) ;
+3. quand les deux enfants sont touchés, en visiter un, empiler l'autre (d'où une **pile** par rayon) ;
+4. aux feuilles : tests rayon-triangle, on garde le **t minimal** (le premier impact — même logique
+   que la petite racine de `hit_sphere`).
+
+C'est cette boucle — branchements imprévisibles, pile, accès mémoire dispersés dans l'arbre — qui
+est catastrophique en SIMT, et que le RT core câble intégralement.
+
+### Les trois tests d'intersection : même famille d'algèbre
+
+| Test | Méthode | Opérations | Qui l'exécute |
+|---|---|---|---|
+| rayon-**AABB** | « slab test » : la boîte = intersection de 3 tranches alignées sur les axes ; t d'entrée/sortie par axe ; touché ssi max(entrées) ≤ min(sorties) | soustractions, multiplications par 1/d précalculé, min/max — pas de discriminant | RT core (nœuds) |
+| rayon-**triangle** | Möller-Trumbore : exprimer l'impact en coordonnées barycentriques (u,v) via produits vectoriels ; touché ssi u ≥ 0, v ≥ 0, u+v ≤ 1, t > 0 | produits scalaires/vectoriels, 1 division | RT core (feuilles) |
+| rayon-**sphère** | notre `hit_sphere` : polynôme du 2nd degré, discriminant h²−ac | produits scalaires, 1 sqrt, 1 division | ALU du SM (primitive custom) |
+
+Le test AABB a le droit d'être grossier : il ne décide rien de définitif, il ne fait qu'**éliminer**.
+La précision géométrique n'est exigée qu'aux feuilles.
+
+### Au passage : pourquoi `hit_sphere` calcule h et pas b
+
+> *« Tu peux me réexpliquer pourquoi il [Shirley] dit que b = −2h pour simplifier la fonction ? »*
+
+Le point qui trompe : il ne « décide » pas que b = −2h — le −2 est **déjà dans b**,
+structurellement. Développer (C − Q − t·d)·(C − Q − t·d) = r² fait sortir le terme croisé avec son
+facteur 2, comme dans (x−y)² = x² **− 2xy** + y² : b = −2·d·(C−Q) est une fatalité algébrique de ce
+problème. Poser h = −b/2 = d·(C−Q) ne fait que nommer la partie utile. Injecté dans la formule des
+racines, les constantes s'annulent alors en cascade :
+
+```
+t = (−b ± √(b² − 4ac)) / 2a
+  = (2h ± √(4h² − 4ac)) / 2a      car −(−2h) = 2h et (−2h)² = 4h²
+  = (2h ± 2·√(h² − ac)) / 2a      le √4 = 2 sort de la racine
+  = (h ± √(h² − ac)) / a          tout se divise par 2
+```
+
+Dans le code, on ne fabrique donc jamais le −2 pour le combattre ensuite : `h = dot(direction, oc)`
+directement, discriminant `h*h - a*c` (c'est b²−4ac divisé par 4 — même signe, le test `< 0` garde
+exactement le même sens), racine `(h - sqrt(disc)) / a`. Une multiplication, une négation et un
+facteur 4 éliminés de la fonction la plus appelée du rendu (cf. les 2×10¹⁰ requêtes ci-dessous).
+Bonus : avec `oc = center − origin` = C−Q, le signe moins disparaît du code aussi, pas seulement
+des maths.
+
+### Le lien avec Monte-Carlo
+
+L'estimateur de la section 7 est ce qui transforme l'intersection en déluge. Compter les requêtes :
+N échantillons par pixel × plusieurs segments par chemin (un par rebond, plus les rayons d'ombre de
+la next event estimation). Image 1920×1080, 1 000 spp, ~5 rebonds : ~2×10⁶ × 10³ × 10 ≈ **2×10¹⁰
+traversées de BVH par image**. Chaque terme de la moyenne Monte-Carlo se paie en traversées.
+
+Plus profond : **c'est Monte-Carlo qui rend la traversée divergente.** Le ray tracing déterministe
+de Whitted produit des rayons voisins quasi parallèles (mêmes directions de réflexion) : ils suivent
+presque le même chemin dans l'arbre, le SIMT survit. Le path tracing tire des directions
+**aléatoires** : dès le premier rebond, deux rayons d'un même warp sont décorrélés et explorent des
+branches différentes. L'aléa — la force statistique de la méthode — est exactement ce qui casse le
+modèle d'exécution de la section 2. Le RT core est la réponse matérielle au coût de l'échantillonnage,
+comme le Tensor core (denoiser) est la réponse matérielle à sa variance : **les deux unités « RTX »
+sont les deux moitiés du prix de Monte-Carlo.**
+
+### Comment on les pilote — et ce que « contrôler » veut dire
+
+**Les RT cores ne sont pas exposés en CUDA pur** : aucune instruction CUDA ne les invoque. La voie
+NVIDIA est **OptiX**, une API au-dessus de CUDA qui répartit le travail de part et d'autre de la
+frontière fixe/programmable :
+
+- *moi, en CUDA C++* : les shaders — ray generation (caméra, échantillonnage Monte-Carlo),
+  closest-hit (BRDF, rebond), miss (ciel). Le côté créatif, sur les SM ;
+- *OptiX + RT cores* : `optixTrace(rayon)` → construction de la BVH, traversée, tests, retour du
+  hit le plus proche. Le côté fixe, câblé.
+
+Le code utilisateur est effectivement **simplifié** : toute la boucle de traversée (pile, AABB,
+triangles) disparaît — on fournit la géométrie, on appelle `optixTrace`, on récupère le hit.
+Alternatives hors CUDA : DXR / Vulkan Ray Tracing, mêmes RT cores via les API graphiques.
+
+### Le RT core câble-t-il un arbre de décision ?
+
+> *« Le circuit du RT core câble un arbre de décision (souvent binaire) en dur, et les données qui
+> circulent dedans, c'est de l'échantillonnage aléatoire ? »*
+
+Presque — trois retouches rendent l'image exacte :
+
+1. **Le circuit ne câble pas l'arbre, il câble la *traversée*.** La BVH est une **donnée** : elle vit
+   en VRAM, reconstruite par le driver pour chaque scène. Ce qui est figé en silicium, c'est la
+   boucle de parcours (charger un nœud, slab test, choisir la branche, empiler). Même circuit, arbre
+   différent à chaque scène — comme un additionneur câblé dont les opérandes restent libres.
+2. **Pas un arbre de décision au sens strict.** Un arbre de décision se parcourt en un seul chemin
+   racine→feuille. Ici, quand le rayon touche les **deux** boîtes filles, on descend dans les deux
+   (l'une tout de suite, l'autre empilée pour plus tard) : c'est une *recherche avec élagage et
+   backtracking*, pas une classification. Et le matériel réel utilise souvent des nœuds plus larges
+   que binaires (4-8 enfants, compressés) pour amortir les lectures mémoire.
+3. **Ce qui circule, ce sont des rayons — l'aléatoire vit en amont.** Le RT core reçoit (origine,
+   direction, t_min, t_max) et rend un hit ; il ignore totalement d'où vient le rayon. C'est le
+   shader ray-gen, sur les SM, qui tire les directions de rebond au hasard (section 7). Division du
+   travail : le SM décide *quels* rayons lancer — là est Monte-Carlo ; le RT core répond *ce qu'ils
+   touchent* — là est la géométrie.
+
+(Et « échantillonnage aléatoire » n'est pas un pléonasme : on peut aussi échantillonner en grille
+régulière, stratifié ou quasi-aléatoire — les suites de Sobol, très utilisées en production,
+convergent même mieux que le pur hasard.)
+
+En formule : **circuit fixe (traversée + tests) × données variables (BVH en mémoire + rayons issus
+de l'échantillonnage).**
+
+### Concrètement, quelles opérations dans le circuit ?
+
+> *« Concrètement ils font quoi comme opérations, les RT cores ? »*
+
+![Pipeline d'un RT core](diagrams/rt_core_pipeline.svg)
+
+Trois blocs, trois natures :
+
+- **Test rayon-AABB (slab test)** — par axe : t d'entrée et de sortie de la « tranche », soit 2
+  soustractions et 2 multiplications par `inv_dir` (l'inverse de la direction, calculé **une fois
+  par rayon** puis réutilisé sur les dizaines de boîtes testées — zéro division dans la boucle),
+  puis des min/max. Total ~20 opérations, aucune racine carrée. Cette frugalité est ce qui rend le
+  test câblable — et ce qui permet d'éliminer des sous-arbres entiers à bas prix.
+- **Test rayon-triangle (Möller-Trumbore)** — produits vectoriels et scalaires pour exprimer
+  l'impact en coordonnées barycentriques (u, v) : ~30 multiplications/additions et 1 division.
+  Cousin direct de `hit_sphere` : mêmes briques (dot, cross, soustractions), barycentriques au lieu
+  du discriminant.
+- **La machine à traverser** — le vrai gain, et ce n'est pas du calcul mais de la **logique de
+  contrôle** : lire et décompresser un nœud, lancer les slab tests, trier les enfants (le plus
+  proche d'abord), gérer la pile, enchaîner sur les feuilles, garder le t minimal, boucler jusqu'à
+  pile vide. Elle remplace des centaines d'instructions SIMT (boucle, if, pile en registres) par une
+  machine à états autonome — et pendant qu'elle mouline, le warp du SM traite d'autres rayons :
+  masquage de latence par-dessus l'accélération brute.
+
+Aucune de ces opérations n'est exotique — mêmes mult/add que les ALU FP32. Le gain vient du
+**pipeline fixe** : pas de fetch/décodage d'instructions, pas de registres généraux, pas de
+divergence de warp — les opérandes s'enchaînent de porte en porte.
 
 ---
 

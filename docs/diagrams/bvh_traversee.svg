@@ -1,0 +1,108 @@
+<svg width="100%" viewBox="0 0 680 430" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Traversée d'une BVH par un rayon</title>
+<desc>À gauche, une scène : deux boîtes englobantes B et C dans la racine A, un rayon touche B et rate C. À droite, l'arbre correspondant : rater C élimine tout son sous-arbre d'un coup — c'est l'origine du coût logarithmique.</desc>
+
+<style>
+  text { font-family: "Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #141413; }
+  .title { font-size: 15px; font-weight: 600; }
+  .s     { font-size: 11px; fill: #3D3D3A; }
+  .sc    { font-size: 11px; fill: #0F6E56; }
+  .sr    { font-size: 11px; fill: #9A3412; }
+  .mut   { font-size: 10px; fill: #73726C; }
+  .box   { fill: #F5F4ED; stroke: #8A8984; stroke-width: 0.5; }
+  .aabb  { fill: none; stroke: #73726C; stroke-width: 1.2; stroke-dasharray: 5 3; }
+  .aabbok{ fill: rgba(225,245,238,0.55); stroke: #0F6E56; stroke-width: 1.4; stroke-dasharray: 5 3; }
+  .aabbko{ fill: none; stroke: #B3B2AC; stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .tri   { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 1; }
+  .triko { fill: #EFEEE8; stroke: #B3B2AC; stroke-width: 1; }
+  .trihit{ fill: #0F6E56; stroke: #085041; stroke-width: 1; }
+  .ray   { stroke: #C2410C; stroke-width: 2; fill: none; }
+  .rayd  { stroke: #C2410C; stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; opacity: 0.55; }
+  .edge  { stroke: #73726C; stroke-width: 1.2; fill: none; }
+  .edgeko{ stroke: #B3B2AC; stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
+  .node  { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 1.2; }
+  .nodeko{ fill: #EFEEE8; stroke: #B3B2AC; stroke-width: 1; stroke-dasharray: 3 3; }
+</style>
+
+<defs>
+  <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<rect x="0" y="0" width="680" height="430" fill="#FBFAF6"/>
+<text class="title" x="20" y="28">La BVH : élaguer l'espace avant de tester les triangles</text>
+
+<!-- ==== Scène (gauche) ==== -->
+<rect class="box" x="20" y="45" width="380" height="300" rx="10"/>
+<text class="mut" x="34" y="63">La scène, vue du rayon</text>
+
+<!-- racine A -->
+<rect class="aabbok" x="45" y="75" width="330" height="245"/>
+<text class="sc" x="52" y="92">A (racine) ✓</text>
+
+<!-- boîte B : touchée -->
+<rect class="aabbok" x="65" y="105" width="140" height="195"/>
+<text class="sc" x="72" y="122">B ✓</text>
+<polygon class="tri" points="95,165 135,132 160,178"/>
+<text class="mut" x="128" y="160" text-anchor="middle">T1</text>
+<polygon class="trihit" points="90,240 140,205 168,262"/>
+<text style="font-size:10px; fill:#FBFAF6;" x="133" y="240" text-anchor="middle">T2</text>
+
+<!-- boîte C : ratée -->
+<rect class="aabbko" x="235" y="115" width="120" height="160"/>
+<text class="mut" x="242" y="132">C ✗ (ratée)</text>
+<polygon class="triko" points="255,180 292,148 318,192"/>
+<text class="mut" x="288" y="176" text-anchor="middle">T3</text>
+<polygon class="triko" points="258,245 300,213 332,258"/>
+<text class="mut" x="297" y="242" text-anchor="middle">T4</text>
+
+<!-- rayon -->
+<line class="ray" x1="32" y1="332" x2="121" y2="216" marker-end="url(#arr2)"/>
+<line class="rayd" x1="121" y1="216" x2="196" y2="118"/>
+<circle cx="121" cy="216" r="4.5" fill="#C2410C" stroke="#FBFAF6" stroke-width="1.2"/>
+<text class="sr" x="30" y="352">rayon (origine + t·direction)</text>
+<text class="sr" x="132" y="212">hit : t minimal</text>
+<text class="mut" x="130" y="102">au-delà du hit : ignoré</text>
+
+<!-- ==== Arbre (droite) ==== -->
+<rect class="box" x="415" y="45" width="245" height="300" rx="10"/>
+<text class="mut" x="429" y="63">La même scène, vue de la BVH</text>
+
+<line class="edge"   x1="537" y1="105" x2="480" y2="165"/>
+<line class="edgeko" x1="537" y1="105" x2="600" y2="165"/>
+<line class="edge"   x1="480" y1="185" x2="450" y2="240"/>
+<line class="edge"   x1="480" y1="185" x2="512" y2="240"/>
+<line class="edgeko" x1="600" y1="185" x2="572" y2="240"/>
+<line class="edgeko" x1="600" y1="185" x2="632" y2="240"/>
+
+<circle class="node" cx="537" cy="95" r="16"/>
+<text class="sc" x="537" y="99" text-anchor="middle">A</text>
+<text class="mut" x="562" y="90">test rayon-AABB ✓</text>
+
+<circle class="node" cx="480" cy="175" r="16"/>
+<text class="sc" x="480" y="179" text-anchor="middle">B</text>
+<text class="mut" x="500" y="168">✓ on descend</text>
+
+<circle class="nodeko" cx="600" cy="175" r="16"/>
+<text class="mut" x="600" y="179" text-anchor="middle">C</text>
+<text class="sr" x="622" y="179">✗ élagué</text>
+
+<circle class="node" cx="450" cy="256" r="15"/>
+<text class="sc" x="450" y="260" text-anchor="middle">T1</text>
+<circle cx="512" cy="256" r="15" fill="#0F6E56" stroke="#085041" stroke-width="1.2"/>
+<text style="font-size:11px; fill:#FBFAF6;" x="512" y="260" text-anchor="middle">T2</text>
+<circle class="nodeko" cx="572" cy="256" r="15"/>
+<text class="mut" x="572" y="260" text-anchor="middle">T3</text>
+<circle class="nodeko" cx="632" cy="256" r="15"/>
+<text class="mut" x="632" y="260" text-anchor="middle">T4</text>
+
+<text class="s" x="537" y="296" text-anchor="middle">feuilles : test rayon-triangle</text>
+<text class="sc" x="537" y="313" text-anchor="middle">T2 gagne (t minimal) — T3, T4 jamais testés</text>
+<text class="mut" x="537" y="330" text-anchor="middle">sur 1 M de triangles : ~20-30 tests au lieu de 1 000 000</text>
+
+<!-- légende bas -->
+<text class="s" x="20" y="378">Aux nœuds : test rayon-AABB (le « slab test », des min/max). Aux feuilles : rayon-triangle (barycentriques).</text>
+<text class="s" x="20" y="396">Branche ratée = sous-arbre entier éliminé : c'est le O(log n). Le RT core câble toute cette boucle.</text>
+<text class="mut" x="20" y="416">hit_sphere est le cousin analytique de ces tests : même algèbre, discriminant au lieu de barycentriques.</text>
+</svg>

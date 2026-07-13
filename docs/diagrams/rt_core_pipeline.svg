@@ -1,0 +1,105 @@
+<svg width="100%" viewBox="0 0 700 470" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Pipeline d'un RT core</title>
+<desc>Le SM émet une requête optixTrace ; le RT core, machine à états à fonction fixe, boucle sur la pile de traversée (lecture de nœud, slab test, test triangle) et renvoie le hit le plus proche au SM.</desc>
+
+<style>
+  text { font-family: "Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #141413; }
+  .title { font-size: 15px; font-weight: 600; }
+  .h     { font-size: 11px; font-weight: 600; }
+  .s     { font-size: 10px; fill: #3D3D3A; }
+  .mut   { font-size: 10px; fill: #73726C; }
+  .hc    { font-size: 11px; font-weight: 600; fill: #0F6E56; }
+  .hm    { font-size: 11px; font-weight: 600; fill: #A85B10; }
+  .hb    { font-size: 11px; font-weight: 600; fill: #2B5BB8; }
+  .hv    { font-size: 10px; fill: #6D45B8; }
+  .panel { fill: #F5F4ED; stroke: #8A8984; stroke-width: 0.5; }
+  .sm    { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 1; }
+  .comp  { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 1; }
+  .mem   { fill: #FBEEDC; stroke: #A85B10; stroke-width: 1; }
+  .ctrl  { fill: #E3EBF8; stroke: #2B5BB8; stroke-width: 1; }
+  .cuda  { fill: #F3EFFB; stroke: #6D45B8; stroke-width: 1; stroke-dasharray: 5 3; }
+  .flow  { stroke: #3D3D3A; stroke-width: 1.4; fill: none; }
+  .loop  { stroke: #2B5BB8; stroke-width: 1.4; fill: none; }
+</style>
+
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<rect x="0" y="0" width="700" height="470" fill="#FBFAF6"/>
+<text class="title" x="20" y="28">Le pipeline d'un RT core : une requête, une machine à états, un hit</text>
+
+<!-- SM amont -->
+<rect class="sm" x="20" y="44" width="660" height="46" rx="8"/>
+<text class="hc" x="34" y="63">SM — shader ray-gen (CUDA / OptiX)</text>
+<text class="s" x="34" y="79">génère le rayon : caméra ou rebond Monte-Carlo — le tirage aléatoire vit ICI, pas dans le RT core</text>
+
+<line class="flow" x1="350" y1="90" x2="350" y2="122" marker-end="url(#arr)"/>
+<text class="mut" x="362" y="110">optixTrace(origine, direction, t_min, t_max)</text>
+
+<!-- RT core -->
+<rect class="panel" x="20" y="124" width="660" height="248" rx="10"/>
+<text class="mut" x="34" y="142">RT core — unité à fonction fixe</text>
+
+<!-- étage 1 : préparation -->
+<rect class="comp" x="40" y="158" width="112" height="80" rx="6"/>
+<text class="hc" x="96" y="175" text-anchor="middle">1. préparation</text>
+<text class="s"  x="96" y="192" text-anchor="middle">inv_dir = 1/d</text>
+<text class="mut" x="96" y="207" text-anchor="middle">1× par rayon :</text>
+<text class="mut" x="96" y="220" text-anchor="middle">0 division ensuite</text>
+
+<!-- étage 2 : pile -->
+<rect class="ctrl" x="168" y="158" width="112" height="80" rx="6"/>
+<text class="hb" x="224" y="175" text-anchor="middle">2. pile</text>
+<text class="s"  x="224" y="192" text-anchor="middle">dépiler le</text>
+<text class="s"  x="224" y="205" text-anchor="middle">prochain nœud</text>
+<text class="mut" x="224" y="222" text-anchor="middle">(vide → sortie)</text>
+
+<!-- étage 3 : mémoire -->
+<rect class="mem" x="296" y="158" width="112" height="80" rx="6"/>
+<text class="hm" x="352" y="175" text-anchor="middle">3. mémoire</text>
+<text class="s"  x="352" y="192" text-anchor="middle">lire + décompresser</text>
+<text class="s"  x="352" y="205" text-anchor="middle">le nœud BVH</text>
+<text class="mut" x="352" y="222" text-anchor="middle">(L2 / VRAM)</text>
+
+<!-- étage 4 : nœud interne -->
+<rect class="comp" x="424" y="158" width="112" height="80" rx="6"/>
+<text class="hc" x="480" y="175" text-anchor="middle">4. nœud interne</text>
+<text class="s"  x="480" y="192" text-anchor="middle">slab test enfants</text>
+<text class="s"  x="480" y="205" text-anchor="middle">~20 ops, min/max</text>
+<text class="mut" x="480" y="222" text-anchor="middle">trier + empiler</text>
+
+<!-- étage 5 : feuille -->
+<rect class="comp" x="552" y="158" width="112" height="80" rx="6"/>
+<text class="hc" x="608" y="175" text-anchor="middle">5. feuille</text>
+<text class="s"  x="608" y="192" text-anchor="middle">Möller-Trumbore</text>
+<text class="s"  x="608" y="205" text-anchor="middle">~30 ops + 1 div</text>
+<text class="mut" x="608" y="222" text-anchor="middle">garder t minimal</text>
+
+<!-- flux entre étages -->
+<line class="flow" x1="152" y1="198" x2="166" y2="198" marker-end="url(#arr)"/>
+<line class="flow" x1="280" y1="198" x2="294" y2="198" marker-end="url(#arr)"/>
+<line class="flow" x1="408" y1="198" x2="422" y2="198" marker-end="url(#arr)"/>
+<line class="flow" x1="536" y1="198" x2="550" y2="198" marker-end="url(#arr)"/>
+
+<!-- boucle de traversée -->
+<path class="loop" d="M608 238 L608 256 L224 256 L224 240" marker-end="url(#arr)"/>
+<text class="hb" x="416" y="270" text-anchor="middle" style="font-weight:400;">boucle tant que la pile n'est pas vide — ~20-30 nœuds visités par rayon</text>
+
+<!-- principe CUDA -->
+<rect class="cuda" x="40" y="284" width="624" height="72" rx="6"/>
+<text class="hv" x="52" y="302" style="font-weight:600;">Principe : machine à états autonome</text>
+<text class="hv" x="52" y="319">Pas de fetch/décodage d'instructions, pas de registres de warp, pas de divergence SIMT :</text>
+<text class="hv" x="52" y="333">les opérandes s'enchaînent de porte en porte (mêmes mult/add que les ALU FP32, mais en pipeline fixe).</text>
+<text class="hv" x="52" y="347">Pendant la traversée, le warp du SM est libre : il traite d'autres rayons — masquage de latence.</text>
+
+<line class="flow" x1="350" y1="372" x2="350" y2="400" marker-end="url(#arr)"/>
+<text class="mut" x="362" y="390">hit : triangle nᵒ, t, (u, v) — ou miss (pile vidée sans impact)</text>
+
+<!-- SM aval -->
+<rect class="sm" x="20" y="402" width="660" height="46" rx="8"/>
+<text class="hc" x="34" y="421">SM — shaders closest-hit / miss</text>
+<text class="s" x="34" y="437">BRDF, rebond, prochain rayon : le côté créatif reste programmable — retour à l'étape du haut</text>
+</svg>
