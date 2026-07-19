@@ -1,3 +1,5 @@
 build/
 output/
 compile_commands.json
+.vscode/
+perf.data
