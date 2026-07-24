@@ -1,4 +1,4 @@
-# Path tracer implementation & cuda_programming
+# Path tracer implementation & cuda programming
 ![Platform](https://img.shields.io/badge/CUDA-76B900?logo=nvidia&logoColor=white)
 ![Language](https://img.shields.io/badge/language-C%2B%2B17-blue)
 
